@@ -1,25 +1,45 @@
-# Use official Python 3 base image with pip pre-installed
+# Use official Python 3.9 slim image
 FROM python:3.9-slim
 
 LABEL maintainer="Amazon AI <sage-learner@amazon.com>"
 
-# Install OS packages (only if needed — you had nginx)
-RUN apt-get -y update && apt-get install -y --no-install-recommends \
+# Install OS packages (nginx & required build tools)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
         nginx \
+        build-essential \
+        gcc \
+        libatlas-base-dev \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages (pip already exists in python:3.9)
-RUN pip install numpy==1.16.2 scipy==1.2.1 scikit-learn==0.20.2 pandas flask gevent gunicorn \
-    && rm -rf /root/.cache
+# Install updated Python packages with versions compatible with Python 3.9
+RUN pip install --no-cache-dir \
+    numpy==1.23.5 \
+    scipy==1.9.3 \
+    scikit-learn==1.2.2 \
+    pandas \
+    flask \
+    gevent \
+    gunicorn
 
-# Keep your environment variables
-ENV PYTHONUNBUFFERED=TRUE
-ENV PYTHONDONTWRITEBYTECODE=TRUE
-ENV PATH="/opt/program:${PATH}"
+# Set environment variables
+ENV PYTHONUNBUFFERED=TRUE \
+    PYTHONDONTWRITEBYTECODE=TRUE \
+    PATH="/opt/program:${PATH}"
 
-# Copy your application code
+# Copy your application code into the container
 COPY decision_trees /opt/program
 
-# Set working directory
+# Set the working directory
 WORKDIR /opt/program
+
+# Expose port your Flask app runs on (default: 5000)
+EXPOSE 5000
+
+# Optional: HEALTHCHECK for Docker/K8s
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD curl -f http://localhost:5000/health || exit 1
+
+# Command to run your Flask app via Gunicorn
+# Replace 'app:app' with the actual module:app_name if different
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
