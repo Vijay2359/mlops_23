@@ -52,7 +52,7 @@ pipeline {
                             --role-arn ${params.SAGEMAKER_EXECUTION_ROLE_TEST} \
                             --input-data-config '{"ChannelName": "training", "DataSource": { "S3DataSource": { "S3DataType": "S3Prefix", "S3Uri": "${params.S3_TRAIN_DATA}"}}}' \
                             --resource-config InstanceType='ml.c4.2xlarge',InstanceCount=1,VolumeSizeInGB=5 \
-                            --output-data-config S3OutputPath='${S3_MODEL_ARTIFACTS}' \
+                            --output-data-config S3OutputPath='s3://${params.S3_MODEL_ARTIFACTS}' \
                             --stopping-condition MaxRuntimeInSeconds=3600
                     """
                 }
@@ -85,7 +85,7 @@ pipeline {
                     sh """
                         aws sagemaker create-model \
                             --model-name ${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test \
-                            --primary-container ContainerHostname=${env.BUILD_ID},Image=${params.ECRURI}:${env.BUILD_ID},ModelDataUrl='${S3_MODEL_ARTIFACTS}'/${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}/output/model.tar.gz,Mode='SingleModel' \
+                            --primary-container ContainerHostname=${env.BUILD_ID},Image=${params.ECRURI}:${env.BUILD_ID},ModelDataUrl='s3://${params.S3_MODEL_ARTIFACTS}/${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}/output/model.tar.gz',Mode='SingleModel' \
                             --execution-role-arn ${params.SAGEMAKER_EXECUTION_ROLE_TEST}
 
                         aws sagemaker create-endpoint-config \
@@ -127,7 +127,7 @@ pipeline {
                     sh """
                         aws sagemaker create-model \
                             --model-name ${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Prod \
-                            --primary-container ContainerHostname=${env.BUILD_ID},Image=${params.ECRURI}:${env.BUILD_ID},ModelDataUrl='${S3_MODEL_ARTIFACTS}'/${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}/output/model.tar.gz,Mode='SingleModel' \
+                            --primary-container ContainerHostname=${env.BUILD_ID},Image=${params.ECRURI}:${env.BUILD_ID},ModelDataUrl='s3://${params.S3_MODEL_ARTIFACTS}/${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}/output/model.tar.gz',Mode='SingleModel' \
                             --execution-role-arn ${params.SAGEMAKER_EXECUTION_ROLE_TEST}
 
                         aws sagemaker create-endpoint-config \
