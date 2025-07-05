@@ -6,6 +6,7 @@ pipeline {
         AWS_ECR_LOGIN = 'true'
         DOCKER_CONFIG = "${params.JENKINSHOME}"
         AWS_DEFAULT_REGION = 'us-east-1'  // Region set globally
+        LAMBDA_EVALUATE_MODEL='MLOps-InvokeEndpoint-scikitbyo'
     }
 
     stages {
