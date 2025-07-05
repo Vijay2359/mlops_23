@@ -103,20 +103,24 @@ pipeline {
         }
 
         stage("SmokeTest") {
-            steps { 
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-ecr-jenkins-creds'
-                ]]) {
-                    sh """
-                        aws lambda invoke \
-                            --function-name "${params.LAMBDA_EVALUATE_MODEL}" \
-                            --cli-binary-format raw-in-base64-out \
-                            --payload '{"EndpointName": "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test", "Body": {"Payload": {"S3TestData": "${params.S3_TEST_DATA}", "S3Key": "test/iris.csv"}}}' evalresponse.json
-                    """
-                }
-            }
+    steps { 
+        script {
+            echo "DEBUG: LAMBDA_EVALUATE_MODEL param value: ${params.LAMBDA_EVALUATE_MODEL}"
         }
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-ecr-jenkins-creds'
+        ]]) {
+            sh """
+                aws lambda invoke \
+                    --function-name "${params.LAMBDA_EVALUATE_MODEL}" \
+                    --cli-binary-format raw-in-base64-out \
+                    --payload '{"EndpointName": "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test", "Body": {"Payload": {"S3TestData": "${params.S3_TEST_DATA}", "S3Key": "test/iris.csv"}}}' evalresponse.json
+            """
+        }
+    }
+}
+
 
         stage("DeployToProd") {
             steps { 
