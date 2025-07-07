@@ -38,8 +38,9 @@ WORKDIR /opt/program
 EXPOSE 5000
 
 # Optional: HEALTHCHECK for Docker/K8s
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD curl -f http://localhost:5000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD curl -f http://localhost:8080/ping || exit 1
+
 
 # Command to run your Flask app via Gunicorn
 # Replace 'app:app' with the actual module:app_name if different
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
