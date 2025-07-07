@@ -34,13 +34,12 @@ COPY decision_trees /opt/program
 # Set the working directory
 WORKDIR /opt/program
 
-# Expose port your Flask app runs on (default: 5000)
-EXPOSE 5000
+# Expose port your Flask app runs on (default: 8080 for SageMaker containers)
+EXPOSE 8080
 
-# Optional: HEALTHCHECK for Docker/K8s
+# HEALTHCHECK for Docker/K8s
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD curl -f http://localhost:8080/ping || exit 1
 
-
 # Command to run your Flask app via Gunicorn
-# Replace 'app:app' with the actual module:app_name if different
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
+# This runs predictor.py's Flask app instead of missing app.py
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "predictor:app"]
