@@ -116,6 +116,9 @@ pipeline {
         script {
             def endpointName = "${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}-Test"
 
+            echo "📡 Invoking Lambda function: ${LAMBDA_EVALUATE_MODEL} with endpoint: ${endpointName}"
+
+            // ✅ Call Lambda with properly escaped payload
             sh """
                 aws lambda invoke \
                     --function-name "${LAMBDA_EVALUATE_MODEL}" \
@@ -124,18 +127,22 @@ pipeline {
                     evalresponse.json > /dev/null
             """
 
+            // ✅ Read and parse response
             def evalJson = readFile('evalresponse.json')
+            echo "📦 Lambda Response: ${evalJson}"
+
             def evalParsed = readJSON text: evalJson
 
             if (evalParsed.status != "Success") {
-                error("Smoke test failed: ${evalParsed.message}")
+                error("❌ Smoke test failed: ${evalParsed.message}")
             }
 
             echo "✅ Smoke Test Passed: ${evalParsed.message}"
-            echo "Prediction result: ${evalParsed.result}"
+            echo "📊 Prediction result: ${evalParsed.result}"
         }
     }
 }
+
 
 
 
