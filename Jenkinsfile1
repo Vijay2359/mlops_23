@@ -4,6 +4,7 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = 'us-east-1'
         LAMBDA_EVALUATE_MODEL = 'MLOps-InvokeEndpoint-scikitbyo'
+        LAMBDA_CHECK_STATUS_TRAINING = 'MLOps-BYO-GetStatus'
     }
 
     stages {
@@ -11,9 +12,6 @@ pipeline {
             steps {
                 checkout([$class: 'GitSCM',
                     branches: [[name: '*/master']],
-                    doGenerateSubmoduleConfigurations: false,
-                    extensions: [],
-                    submoduleCfg: [],
                     userRemoteConfigs: [[url: 'https://github.com/Vijay2359/mlops_23']]
                 ])
             }
@@ -21,91 +19,144 @@ pipeline {
 
         stage("BuildPushContainer") {
             steps {
-                sh """
-                    echo "${params.ECRURI}"
-                    aws ecr get-login-password | docker login --username AWS --password-stdin ${params.ECRURI}
-                    docker build -t scikit-byo:${env.BUILD_ID} .
-                    docker tag scikit-byo:${env.BUILD_ID} ${params.ECRURI}:${env.BUILD_ID}
-                    docker push ${params.ECRURI}:${env.BUILD_ID}
-                """
+                sh '''
+                    echo "${ECRURI}"
+                    aws ecr get-login-password | docker login --username AWS --password-stdin ${ECRURI}
+                    docker build -t scikit-byo:${BUILD_ID} .
+                    docker tag scikit-byo:${BUILD_ID} ${ECRURI}:${BUILD_ID}
+                    docker push ${ECRURI}:${BUILD_ID}
+                '''
             }
         }
 
         stage("TrainModel") {
             steps {
-                sh """
+                sh '''
                     aws sagemaker create-training-job \
-                        --training-job-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}" \
-                        --algorithm-specification TrainingImage="${params.ECRURI}:${env.BUILD_ID}",TrainingInputMode="File" \
-                        --role-arn "${params.SAGEMAKER_EXECUTION_ROLE_TEST}" \
-                        --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3DataType":"S3Prefix","S3Uri":"${params.S3_TRAIN_DATA}"}}}]' \
+                        --training-job-name "${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}" \
+                        --algorithm-specification TrainingImage="${ECRURI}:${BUILD_ID}",TrainingInputMode="File" \
+                        --role-arn "${SAGEMAKER_EXECUTION_ROLE_TEST}" \
+                        --input-data-config '[{"ChannelName":"training","DataSource":{"S3DataSource":{"S3DataType":"S3Prefix","S3Uri":"'"${S3_TRAIN_DATA}"'","S3DataDistributionType":"FullyReplicated"}}}]' \
                         --resource-config InstanceType=ml.c4.2xlarge,InstanceCount=1,VolumeSizeInGB=5 \
-                        --output-data-config S3OutputPath="${params.S3_MODEL_ARTIFACTS}" \
+                        --output-data-config S3OutputPath="${S3_MODEL_ARTIFACTS}" \
                         --stopping-condition MaxRuntimeInSeconds=3600
-                """
+                '''
             }
         }
 
         stage("TrainStatus") {
             steps {
-                sh """
-                    aws lambda invoke \
-                        --function-name "${params.LAMBDA_CHECK_STATUS_TRAINING}" \
-                        --cli-binary-format raw-in-base64-out \
-                        --payload '{"TrainingJobName": "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}"}' response.json
-                    sleep 240
-                """
+                script {
+                    def status = "InProgress"
+                    def jobName = "${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}"
+                    def maxAttempts = 4
+                    def attempt = 0
+
+                    while (status != "Completed" && attempt < maxAttempts) {
+                        echo "Checking training status... Attempt ${attempt + 1}"
+
+                        sh """
+                            aws lambda invoke \
+                                --function-name "${LAMBDA_CHECK_STATUS_TRAINING}" \
+                                --cli-binary-format raw-in-base64-out \
+                                --payload '{\"TrainingJobName\": \"${jobName}\"}' \
+                                response.json > /dev/null
+                        """
+
+                        def json = readFile('response.json')
+                        def parsed = readJSON text: json
+                        def body = parsed.body ? readJSON(text: parsed.body) : parsed
+                        status = body.status
+
+                        if (status == "Completed") {
+                            echo "Training job completed."
+                        } else if (status == "Failed") {
+                            def reason = body.failureReason ?: "Unknown"
+                            error("Training job failed. Reason: ${reason}")
+                        } else {
+                            sleep(time: 60, unit: 'SECONDS')
+                        }
+
+                        attempt++
+                    }
+
+                    if (status != "Completed") {
+                        error("Training job did not complete within expected time.")
+                    }
+                }
             }
         }
 
         stage("DeployToTest") {
             steps {
-                sh """
+                sh '''
+                    MODEL_NAME="${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}-Test"
+                    MODEL_ARTIFACT="${S3_MODEL_ARTIFACTS}/${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}/output/model.tar.gz"
+
                     aws sagemaker create-model \
-                        --model-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test" \
-                        --primary-container ContainerHostname="${env.BUILD_ID}",Image="${params.ECRURI}:${env.BUILD_ID}",ModelDataUrl="${params.S3_MODEL_ARTIFACTS}/${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}/output/model.tar.gz",Mode=SingleModel \
-                        --execution-role-arn "${params.SAGEMAKER_EXECUTION_ROLE_TEST}"
+                        --model-name "$MODEL_NAME" \
+                        --primary-container Image="${ECRURI}:${BUILD_ID}",ModelDataUrl="$MODEL_ARTIFACT" \
+                        --execution-role-arn "${SAGEMAKER_EXECUTION_ROLE_TEST}"
 
                     aws sagemaker create-endpoint-config \
-                        --endpoint-config-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test" \
-                        --production-variants VariantName="single-model",ModelName="${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test",InstanceType=ml.m4.xlarge,InitialVariantWeight=1,InitialInstanceCount=1
+                        --endpoint-config-name "$MODEL_NAME" \
+                        --production-variants VariantName="single-model",ModelName="$MODEL_NAME",InstanceType=ml.m4.xlarge,InitialVariantWeight=1,InitialInstanceCount=1
 
                     aws sagemaker create-endpoint \
-                        --endpoint-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test" \
-                        --endpoint-config-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test"
+                        --endpoint-name "$MODEL_NAME" \
+                        --endpoint-config-name "$MODEL_NAME"
 
-                    sleep 300
-                """
+                    aws sagemaker wait endpoint-in-service --endpoint-name "$MODEL_NAME"
+                '''
             }
         }
 
         stage("SmokeTest") {
-            steps {
-                sh """
-                    aws lambda invoke \
-                        --function-name "${LAMBDA_EVALUATE_MODEL}" \
-                        --cli-binary-format raw-in-base64-out \
-                        --payload '{"EndpointName": "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Test", "Body": {"Payload": {"S3TestData": "${params.S3_TEST_DATA}", "S3Key": "test/iris.csv"}}}' evalresponse.json
-                """
+    steps {
+        script {
+            def endpointName = "${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}-Test"
+
+            sh """
+                aws lambda invoke \
+                    --function-name "${LAMBDA_EVALUATE_MODEL}" \
+                    --cli-binary-format raw-in-base64-out \
+                    --payload "{\\"endpoint\\": \\"${endpointName}\\"}" \
+                    evalresponse.json > /dev/null
+            """
+
+            def evalJson = readFile('evalresponse.json')
+            def evalParsed = readJSON text: evalJson
+
+            if (evalParsed.status != "Success") {
+                error("Smoke test failed: ${evalParsed.message}")
             }
+
+            echo "Smoke Test Passed: ${evalParsed.message}"
+            echo "Predicted Output: ${evalParsed.result}"
         }
+    }
+}
+
 
         stage("DeployToProd") {
             steps {
-                sh """
+                sh '''
+                    MODEL_NAME="${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}-Prod"
+                    MODEL_ARTIFACT="${S3_MODEL_ARTIFACTS}/${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}/output/model.tar.gz"
+
                     aws sagemaker create-model \
-                        --model-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Prod" \
-                        --primary-container ContainerHostname="${env.BUILD_ID}",Image="${params.ECRURI}:${env.BUILD_ID}",ModelDataUrl="${params.S3_MODEL_ARTIFACTS}/${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}/output/model.tar.gz",Mode=SingleModel \
-                        --execution-role-arn "${params.SAGEMAKER_EXECUTION_ROLE_TEST}"
+                        --model-name "$MODEL_NAME" \
+                        --primary-container Image="${ECRURI}:${BUILD_ID}",ModelDataUrl="$MODEL_ARTIFACT" \
+                        --execution-role-arn "${SAGEMAKER_EXECUTION_ROLE_TEST}"
 
                     aws sagemaker create-endpoint-config \
-                        --endpoint-config-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Prod" \
-                        --production-variants VariantName="single-model",ModelName="${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Prod",InstanceType=ml.m4.xlarge,InitialVariantWeight=1,InitialInstanceCount=1
+                        --endpoint-config-name "$MODEL_NAME" \
+                        --production-variants VariantName="single-model",ModelName="$MODEL_NAME",InstanceType=ml.m4.xlarge,InitialVariantWeight=1,InitialInstanceCount=1
 
                     aws sagemaker create-endpoint \
-                        --endpoint-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Prod" \
-                        --endpoint-config-name "${params.SAGEMAKER_TRAINING_JOB}-${env.BUILD_ID}-Prod"
-                """
+                        --endpoint-name "$MODEL_NAME" \
+                        --endpoint-config-name "$MODEL_NAME"
+                '''
             }
         }
     }
