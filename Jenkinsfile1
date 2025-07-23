@@ -111,7 +111,7 @@ pipeline {
             }
         }
 
-        stage("SmokeTest") {
+       stage("SmokeTest") {
     steps {
         script {
             def endpointName = "${SAGEMAKER_TRAINING_JOB}-${BUILD_ID}-Test"
@@ -120,7 +120,7 @@ pipeline {
                 aws lambda invoke \
                     --function-name "${LAMBDA_EVALUATE_MODEL}" \
                     --cli-binary-format raw-in-base64-out \
-                    --payload "{\\"endpoint\\": \\"${endpointName}\\"}" \
+                    --payload '{\"endpoint\": \"${endpointName}\"}' \
                     evalresponse.json > /dev/null
             """
 
@@ -131,11 +131,12 @@ pipeline {
                 error("Smoke test failed: ${evalParsed.message}")
             }
 
-            echo "Smoke Test Passed: ${evalParsed.message}"
-            echo "Predicted Output: ${evalParsed.result}"
+            echo "✅ Smoke Test Passed: ${evalParsed.message}"
+            echo "Prediction result: ${evalParsed.result}"
         }
     }
 }
+
 
 
         stage("DeployToProd") {
